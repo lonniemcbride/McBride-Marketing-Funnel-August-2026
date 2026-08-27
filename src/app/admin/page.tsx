@@ -68,7 +68,10 @@ function AdminDashboard() {
         </div>
         <div className="flex items-center gap-4">
           <Link href="/admin/reqs" className="text-sm font-semibold text-mcbride-blue hover:underline">
-            Reqs &rarr;
+            Reqs
+          </Link>
+          <Link href="/admin/team" className="text-sm font-semibold text-mcbride-blue hover:underline">
+            Team
           </Link>
           <LogoutButton />
         </div>

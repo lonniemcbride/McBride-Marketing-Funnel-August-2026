@@ -98,6 +98,9 @@ function ReqsDashboard() {
           <Link href="/admin" className="text-sm font-semibold text-mcbride-blue hover:underline">
             &larr; Candidates
           </Link>
+          <Link href="/admin/team" className="text-sm font-semibold text-mcbride-blue hover:underline">
+            Team
+          </Link>
           <LogoutButton />
         </div>
       </div>
