@@ -26,6 +26,11 @@ export interface TrackConfig {
  */
 const activeTrack = process.env.NEXT_PUBLIC_TRACK;
 
+/** The track this deployment is dedicated to, or null (local/combined dev). */
+export function getActiveTrack(): Track | null {
+  return activeTrack === "nato" || activeTrack === "air_force" ? activeTrack : null;
+}
+
 function hrefsFor(track: Track, basePath: string) {
   const isDedicatedDeploy = activeTrack === track;
   return {
