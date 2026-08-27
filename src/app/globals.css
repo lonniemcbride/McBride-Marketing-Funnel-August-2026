@@ -2,25 +2,33 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #000000;
+
+  /* McBride brand palette, per McBride Style Guide */
+  --color-prussian-blue: #1d3752;
+  --color-mcbride-blue: #1c74bc;
+  --color-independence: #44546a;
+  --color-yale-blue: #224e73;
+  --color-verdigris: #439ca3;
+  --color-android-green: #70ad47;
+  --color-marigold: #efa00b;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-prussian-blue: var(--color-prussian-blue);
+  --color-mcbride-blue: var(--color-mcbride-blue);
+  --color-independence: var(--color-independence);
+  --color-yale-blue: var(--color-yale-blue);
+  --color-verdigris: var(--color-verdigris);
+  --color-android-green: var(--color-android-green);
+  --color-marigold: var(--color-marigold);
+  --font-sans: Calibri, Candara, Segoe, "Segoe UI", Optima, Arial, sans-serif;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
 }
