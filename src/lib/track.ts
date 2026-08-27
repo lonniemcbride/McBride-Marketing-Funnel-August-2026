@@ -17,6 +17,24 @@ export interface TrackConfig {
   eyebrow: string;
 }
 
+/**
+ * When a Vercel project is dedicated to a single track (NEXT_PUBLIC_TRACK
+ * set in that project's env vars), next.config.ts rewrites "/" and "/survey"
+ * to that track's real routes, and links here switch to the short paths so
+ * the browser URL never reveals "/nato" or "/air-force". Unset (local dev,
+ * or a combined deployment) keeps the full paths and the "/" chooser page.
+ */
+const activeTrack = process.env.NEXT_PUBLIC_TRACK;
+
+function hrefsFor(track: Track, basePath: string) {
+  const isDedicatedDeploy = activeTrack === track;
+  return {
+    homeHref: isDedicatedDeploy ? "/" : basePath,
+    surveyHref: isDedicatedDeploy ? "/survey" : `${basePath}/survey`,
+    thankYouHref: isDedicatedDeploy ? "/survey/thank-you" : `${basePath}/survey/thank-you`,
+  };
+}
+
 export const TRACKS: Record<Track, TrackConfig> = {
   nato: {
     track: "nato",
@@ -24,9 +42,7 @@ export const TRACKS: Record<Track, TrackConfig> = {
     logoSrc: "/brand/mcbride-intl-logo.png",
     logoWidth: 160,
     logoHeight: 43,
-    homeHref: "/nato",
-    surveyHref: "/nato/survey",
-    thankYouHref: "/nato/survey/thank-you",
+    ...hrefsFor("nato", "/nato"),
     tableName: "nato_survey_responses",
     bucketName: "resumes-nato",
     eyebrow: "NATO Contract Staffing · Cleared Careers, Entry to Principal Level",
@@ -37,9 +53,7 @@ export const TRACKS: Record<Track, TrackConfig> = {
     logoSrc: "/brand/mcbride-logo.png",
     logoWidth: 160,
     logoHeight: 43,
-    homeHref: "/air-force",
-    surveyHref: "/air-force/survey",
-    thankYouHref: "/air-force/survey/thank-you",
+    ...hrefsFor("air_force", "/air-force"),
     tableName: "air_force_survey_responses",
     bucketName: "resumes-air-force",
     eyebrow: "U.S. Air Force Contract Staffing · Cleared Careers, Entry to Principal Level",
