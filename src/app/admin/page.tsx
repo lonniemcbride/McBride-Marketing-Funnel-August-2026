@@ -66,7 +66,12 @@ function AdminDashboard() {
           </p>
           <h1 className="mt-1 text-2xl font-bold text-prussian-blue">Candidates</h1>
         </div>
-        <LogoutButton />
+        <div className="flex items-center gap-4">
+          <Link href="/admin/reqs" className="text-sm font-semibold text-mcbride-blue hover:underline">
+            Reqs &rarr;
+          </Link>
+          <LogoutButton />
+        </div>
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">

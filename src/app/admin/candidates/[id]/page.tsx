@@ -9,6 +9,8 @@ import { supabase } from "@/lib/supabase/client";
 import { getActiveTrack, TRACKS } from "@/lib/track";
 import type { SurveyResponseRow, SubmissionStatus } from "@/lib/survey/response-row";
 import { statusOptions } from "@/lib/survey/response-row";
+import type { Req } from "@/lib/reqs/types";
+import type { SupplementResponseRow } from "@/lib/supplement/types";
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   if (value === null || value === undefined || value === "") return null;
@@ -29,6 +31,37 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+function SupplementLinkBox({ id }: { id: string }) {
+  const track = getActiveTrack();
+  const config = track ? TRACKS[track] : null;
+  const [copied, setCopied] = useState(false);
+  if (!config) return null;
+
+  const path = config.supplementHref(id);
+  const fullUrl = typeof window !== "undefined" ? `${window.location.origin}${path}` : path;
+
+  return (
+    <div className="rounded-md bg-marigold/10 px-4 py-3 text-sm">
+      <p className="font-semibold text-independence">
+        Supplement pending — send this link to the candidate:
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <code className="flex-1 overflow-x-auto rounded bg-white px-2 py-1 text-xs">{fullUrl}</code>
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(fullUrl);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+          className="rounded-md bg-mcbride-blue px-3 py-1.5 text-xs font-bold text-white hover:bg-prussian-blue"
+        >
+          {copied ? "Copied!" : "Copy"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CandidateDetail() {
   const { id } = useParams<{ id: string }>();
   const track = getActiveTrack();
@@ -39,7 +72,13 @@ function CandidateDetail() {
   const [resumeUrl, setResumeUrl] = useState<string | null>(null);
   const [savingStatus, setSavingStatus] = useState(false);
 
-  useEffect(() => {
+  const [openReqs, setOpenReqs] = useState<Req[]>([]);
+  const [selectedReqId, setSelectedReqId] = useState("");
+  const [matching, setMatching] = useState(false);
+  const [matchedReq, setMatchedReq] = useState<Req | null>(null);
+  const [supplement, setSupplement] = useState<SupplementResponseRow | null>(null);
+
+  function loadCandidate() {
     if (!config) return;
     supabase
       .from(config.tableName)
@@ -50,7 +89,69 @@ function CandidateDetail() {
         if (error) setError(error.message);
         else setRow(data as SurveyResponseRow);
       });
-  }, [config, id]);
+  }
+
+  useEffect(loadCandidate, [config, id]);
+
+  useEffect(() => {
+    if (!config) return;
+    supabase
+      .from(config.reqsTableName)
+      .select("*")
+      .eq("status", "Open")
+      .order("created_at", { ascending: false })
+      .then(({ data }) => setOpenReqs((data as Req[]) ?? []));
+  }, [config]);
+
+  useEffect(() => {
+    // No UI path currently unmatches a candidate, so there's nothing to
+    // reset back to null here — this only ever runs once matched_req_id
+    // is set for this candidate.
+    if (!config || !row?.matched_req_id) return;
+    supabase
+      .from(config.reqsTableName)
+      .select("*")
+      .eq("id", row.matched_req_id)
+      .single()
+      .then(({ data }) => setMatchedReq(data as Req));
+    supabase
+      .from(config.supplementTableName)
+      .select("*")
+      .eq("survey_response_id", row.id)
+      .eq("req_id", row.matched_req_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => setSupplement(data as SupplementResponseRow | null));
+  }, [config, row?.matched_req_id, row?.id]);
+
+  async function handleMatch() {
+    if (!config || !row || !selectedReqId) return;
+    setMatching(true);
+    setError(null);
+
+    const { error: supplementError } = await supabase.from(config.supplementTableName).insert({
+      survey_response_id: row.id,
+      req_id: selectedReqId,
+    });
+    if (supplementError) {
+      setMatching(false);
+      setError(supplementError.message);
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from(config.tableName)
+      .update({ matched_req_id: selectedReqId, status: "Matched" })
+      .eq("id", row.id);
+    setMatching(false);
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setSelectedReqId("");
+    loadCandidate();
+  }
 
   async function handleDownloadResume() {
     if (!config || !row) return;
@@ -146,6 +247,69 @@ function CandidateDetail() {
           Signed link expires 5 minutes after generation — click Download again if it lapses.
         </p>
       )}
+
+      <section className="mt-8 rounded-lg border border-black/10 bg-white p-6">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-mcbride-blue">Match &amp; Supplement</h2>
+
+        {!matchedReq && (
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <label className="block">
+              <span className="text-sm font-semibold text-independence">Match to an open req</span>
+              <select
+                value={selectedReqId}
+                onChange={(e) => setSelectedReqId(e.target.value)}
+                className="mt-1.5 block w-64 rounded-md border border-black/20 px-3 py-2 text-sm focus:border-mcbride-blue focus:outline-none focus:ring-1 focus:ring-mcbride-blue"
+              >
+                <option value="">Select a req</option>
+                {openReqs.map((r) => (
+                  <option key={r.id} value={r.id}>{r.title}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={handleMatch}
+              disabled={!selectedReqId || matching}
+              className="rounded-md bg-mcbride-blue px-4 py-2 text-sm font-bold text-white hover:bg-prussian-blue disabled:opacity-60"
+            >
+              {matching ? "Matching…" : "Match"}
+            </button>
+            {openReqs.length === 0 && (
+              <p className="text-sm text-black/40">No open reqs yet — create one under Reqs.</p>
+            )}
+          </div>
+        )}
+
+        {matchedReq && (
+          <div className="mt-4 space-y-3">
+            <p className="text-sm text-black/80">
+              Matched to <span className="font-semibold">{matchedReq.title}</span> ({matchedReq.domain})
+            </p>
+
+            {supplement && !supplement.submitted_at && (
+              <SupplementLinkBox id={supplement.id} />
+            )}
+            {supplement && supplement.submitted_at && (
+              <div className="rounded-md bg-android-green/10 px-4 py-3 text-sm text-black/80">
+                <p className="font-semibold text-android-green">Supplement submitted</p>
+                <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <Field label="Direct experience" value={supplement.direct_experience} />
+                  <Field label="Confidence rating" value={supplement.confidence_rating} />
+                  <Field label="Available by need date" value={supplement.available_by_need_date} />
+                  <Field label="Duty location workable" value={supplement.duty_location_workable} />
+                  <Field label="Notes for recruiter" value={supplement.notes_for_recruiter} />
+                </dl>
+              </div>
+            )}
+
+            <Link
+              href={`/admin/candidates/${row.id}/dossier`}
+              className="inline-block rounded-md bg-marigold px-4 py-2 text-sm font-bold text-prussian-blue hover:bg-android-green"
+            >
+              View dossier
+            </Link>
+          </div>
+        )}
+      </section>
 
       <div className="mt-8 space-y-6">
         <Section title="Contact & Basics">

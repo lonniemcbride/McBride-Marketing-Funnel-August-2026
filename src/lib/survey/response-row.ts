@@ -6,6 +6,7 @@ export interface SurveyResponseRow {
   id: string;
   submitted_at: string;
   status: SubmissionStatus;
+  matched_req_id: string | null;
 
   c1_full_name: string;
   c2_email: string;

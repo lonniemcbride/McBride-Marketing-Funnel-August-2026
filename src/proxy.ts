@@ -22,7 +22,7 @@ export function proxy(request: NextRequest) {
   const target =
     pathname === "/"
       ? basePath
-      : pathname === "/survey" || pathname === "/survey/thank-you"
+      : pathname === "/survey" || pathname === "/survey/thank-you" || pathname.startsWith("/supplement/")
         ? `${basePath}${pathname}`
         : null;
 
@@ -34,5 +34,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/survey", "/survey/thank-you"],
+  matcher: ["/", "/survey", "/survey/thank-you", "/supplement/:id"],
 };
