@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Script from "next/script";
 import { useForm, type Path } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { surveySchema, type SurveyFormData } from "@/lib/survey/schema";
@@ -10,9 +11,9 @@ import {
   showEntryAddOn,
   showPrincipalAddOn,
 } from "@/lib/survey/branching";
-import { toSurveyResponseRow } from "@/lib/survey/payload";
 import { supabase } from "@/lib/supabase/client";
 import { TRACKS, type Track } from "@/lib/track";
+import { ALLOWED_RESUME_MIME_TYPES, MAX_RESUME_SIZE } from "@/lib/survey/resume-constraints";
 import {
   emptyToUndefined,
   FieldShell,
@@ -50,6 +51,10 @@ export function SurveyForm({ track }: { track: Track }) {
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [honeypot, setHoneypot] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileScriptLoaded, setTurnstileScriptLoaded] = useState(false);
+  const turnstileWidgetId = useRef<string | null>(null);
 
   const {
     register,
@@ -68,6 +73,20 @@ export function SurveyForm({ track }: { track: Track }) {
     // mismatch instead of the intended required/optional message.
     defaultValues: { P4: [], M2: [] },
   });
+
+  // Turnstile tokens expire after ~5 minutes and this survey takes 8-12, so
+  // the widget only renders on the final step, right before submission —
+  // rendering it on step 0 would leave a stale, unusable token by the time
+  // the candidate actually submits.
+  useEffect(() => {
+    if (step !== 6 || !turnstileScriptLoaded || turnstileWidgetId.current) return;
+    if (!window.turnstile) return;
+    turnstileWidgetId.current = window.turnstile.render("#turnstile-container", {
+      sitekey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!,
+      callback: (token) => setTurnstileToken(token),
+      "expired-callback": () => setTurnstileToken(""),
+    });
+  }, [step, turnstileScriptLoaded]);
 
   const cl2 = watch("CL2");
   const p3 = watch("P3");
@@ -126,20 +145,50 @@ export function SurveyForm({ track }: { track: Track }) {
       setStep(0);
       return;
     }
+    if (!turnstileToken) {
+      setSubmitError("Please complete the verification check above before submitting.");
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const resumePath = `${crypto.randomUUID()}-${resumeFile.name}`;
+      // 1. Get a short-lived signed upload URL — the file never passes
+      // through our own server, avoiding the serverless body-size cap.
+      const uploadUrlRes = await fetch("/api/survey/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          track,
+          fileName: resumeFile.name,
+          fileSize: resumeFile.size,
+          mimeType: resumeFile.type,
+        }),
+      });
+      if (!uploadUrlRes.ok) {
+        const body = await uploadUrlRes.json().catch(() => ({}));
+        throw new Error(body.error || "Could not prepare your resume upload.");
+      }
+      const { path, token } = await uploadUrlRes.json();
+
+      // 2. Upload directly to Supabase Storage using that signed URL.
       const { error: uploadError } = await supabase.storage
         .from(trackConfig.bucketName)
-        .upload(resumePath, resumeFile);
+        .uploadToSignedUrl(path, token, resumeFile);
       if (uploadError) throw uploadError;
 
-      const row = toSurveyResponseRow(data, resumePath);
-      const { error: insertError } = await supabase
-        .from(trackConfig.tableName)
-        .insert(row);
-      if (insertError) throw insertError;
+      // 3. Submit the rest of the profile — this is the only path that can
+      // write a row; the public insert policy was removed.
+      const submitRes = await fetch("/api/survey/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track, data, resumePath: path, turnstileToken, honeypot }),
+      });
+      if (!submitRes.ok) {
+        const body = await submitRes.json().catch(() => ({}));
+        throw new Error(
+          body.error || "Something went wrong submitting your profile. Please try again.",
+        );
+      }
 
       router.push(trackConfig.thankYouHref);
     } catch (err) {
@@ -155,6 +204,26 @@ export function SurveyForm({ track }: { track: Track }) {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="mx-auto max-w-2xl px-6 py-16">
+      <Script
+        src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+        async
+        defer
+        onLoad={() => setTurnstileScriptLoaded(true)}
+      />
+
+      {/* Honeypot — hidden from real candidates, off-screen rather than
+          display:none so basic bots that skip hidden fields still fill it. */}
+      <input
+        type="text"
+        name="company"
+        value={honeypot}
+        onChange={(e) => setHoneypot(e.target.value)}
+        tabIndex={-1}
+        autoComplete="off"
+        aria-hidden="true"
+        className="absolute -left-[9999px] h-0 w-0 opacity-0"
+      />
+
       <ol className="mb-8 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-black/40">
         {STEP_LABELS.map((label, i) => (
           <li
@@ -190,7 +259,21 @@ export function SurveyForm({ track }: { track: Track }) {
               type="file"
               accept=".pdf,.doc,.docx"
               className="mt-1.5 block w-full text-sm"
-              onChange={(e) => setResumeFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                if (file && file.size > MAX_RESUME_SIZE) {
+                  setResumeError("File is too large (10MB max)");
+                  setResumeFile(null);
+                  return;
+                }
+                if (file && !ALLOWED_RESUME_MIME_TYPES.includes(file.type)) {
+                  setResumeError("File type not allowed (PDF, DOC, or DOCX only)");
+                  setResumeFile(null);
+                  return;
+                }
+                setResumeError(null);
+                setResumeFile(file);
+              }}
             />
             {resumeError && (
               <span className="mt-1 block text-xs font-medium text-red-600">
@@ -500,6 +583,7 @@ export function SurveyForm({ track }: { track: Track }) {
               ))}
             </select>
           </FieldShell>
+          <div id="turnstile-container" />
         </div>
       )}
 
@@ -529,7 +613,7 @@ export function SurveyForm({ track }: { track: Track }) {
         ) : (
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || !turnstileToken}
             className="rounded-md bg-marigold px-6 py-2.5 text-sm font-bold text-prussian-blue hover:bg-android-green disabled:opacity-60"
           >
             {submitting ? "Submitting..." : "Submit My Profile"}
